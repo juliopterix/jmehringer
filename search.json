@@ -1,23 +1,23 @@
 [
   {
-    "objectID": "posts/welcome/index.html",
-    "href": "posts/welcome/index.html",
+    "objectID": "posts/2025-06-11-welcome/index.html",
+    "href": "posts/2025-06-11-welcome/index.html",
     "title": "Welcome To My Blog",
     "section": "",
-    "text": "This is placeholder site and will likely be removed in the future :)"
+    "text": "Hi! Glad your’re here! 🙂\nIt’s time to step into the blog-o-sphere. I’ve learnt so much from other peoples’ blogs and would find great joy of someone else would learn something from my learnings as well.\nFor now, this is it on here. I will add some content from time to time.\nCheers!"
+  },
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "Blog",
+    "section": "",
+    "text": "Welcome To My Blog\n\n\n\n\n\n\nnews\n\n\n\n\n\n\n\n\n\nMar 19, 2025\n\n\nJulius Mehringer\n\n\n\n\n\n\nNo matching items"
   },
   {
     "objectID": "about.html",
     "href": "about.html",
     "title": "About",
     "section": "",
-    "text": "This blod contains some personal notes and learnings about mathematical and probalistic modeling, as well as some special cases of machine learning or artificial intelligence."
-  },
-  {
-    "objectID": "index.html",
-    "href": "index.html",
-    "title": "jmehringer",
-    "section": "",
-    "text": "Welcome To My Blog\n\n\n\n\n\n\nnews\n\n\n\n\n\n\n\n\n\nMar 19, 2025\n\n\nJulius Mehringer\n\n\n\n\n\n\nNo matching items"
+    "text": "This website contains some personal notes and learnings about mathematical and probabilistic modeling, as well as some special cases of machine learning or artificial intelligence.\nThe avatar was created on this free avatar generator."
   }
 ]

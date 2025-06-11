@@ -1,0 +1,14 @@
+---
+title: "Welcome To My Blog"
+author: "Julius Mehringer"
+date: "2025-03-19"
+categories: [news]
+---
+
+Hi! Glad your're here! 🙂
+
+It's time to step into the blog-o-sphere. I've learnt so much from other peoples' blogs and would find great joy of someone else would learn something from my learnings as well.
+
+For now, this is it on here. I will add some content from time to time.
+
+Cheers!

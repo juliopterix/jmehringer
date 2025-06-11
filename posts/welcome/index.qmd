@@ -1,8 +1,0 @@
----
-title: "Welcome To My Blog"
-author: "Julius Mehringer"
-date: "2025-03-19"
-categories: [news]
----
-
-This is placeholder site and will likely be removed in the future :)

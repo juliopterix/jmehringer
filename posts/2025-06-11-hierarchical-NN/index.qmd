@@ -1,9 +1,9 @@
 ---
 title: "Hierarchical Bayesian Neural Networks with variable group sizes"
 author: "Julius Mehringer"
-date: "2025-03-19"
+date: "2025-06-11"
 categories: [probabilistic machine learning, bayesian neural networks, hierarchical modeling, jax, blackjax]
-draft: true
+draft: false
 format:
   html:
     code-fold: true

@@ -1,7 +1,7 @@
 ---
 title: "Welcome To My Blog"
 author: "Julius Mehringer"
-date: "2025-03-19"
+date: "2025-06-01"
 categories: [news]
 ---
 

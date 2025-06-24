@@ -332,7 +332,7 @@ def fit_and_eval_tut(
     grid,
     n_groups=None,
     num_warmup=1000,
-    num_samples=500,
+    num_samples=2000,
 ):
     (
         init_key,

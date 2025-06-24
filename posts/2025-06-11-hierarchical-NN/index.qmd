@@ -1,34 +1,48 @@
 ---
 title: "Hierarchical Bayesian Neural Networks with variable group sizes"
-author: "Julius Mehringer"
-date: "2025-06-11"
-categories: [probabilistic machine learning, bayesian neural networks, hierarchical modeling, jax, blackjax]
-draft: false
+description: "Standard implementations and publically available tutorials of Hierarchical Bayesian Neural Networks (HBNNs) lack the ability to work with varying numbers of training examples per group. In this entry, I will show you how we can make use of padding and masking in order to be able to train HBNNs."
+author: 
+    - name: Julius Mehringer
+      url: https://github.com/juliopterix
+      orcid: 0009-0006-2827-9156
+date: "2025-06-13"
+categories: [Probabilistic Machine Learning, nonlinear model, Hierarchical Modeling, jax, blackjax] # self-defined categories
 format:
   html:
-    code-fold: true
+    code-fold: false
+    code-tools: true
     page-layout: full
-self-contained: true
 image: figures/hbnn_decision_boundaries.png
-execute:
+draft: false # setting this to `true` will prevent your post from appearing on your listing page until you're ready!
+self-contained: false
+execute: 
   freeze: auto
+number-sections: true
+code-annotations: hover
 ---
 
-::: {.callout-warning}
-This entry is seriously in the making. Please come back later for updates.
-:::
+Bayesian Modeling is a very suitable choice if you want to obtain the uncertainty associated with the predictions of a model. Here, typically a Markov Chain Monte Carlo estimator is used, which explores any stationary distribution and recovers (asymptotically) consistent estimators and thus those samplers are of primary interest, because we can essentially (re-)construct any distribution. This can also be the joint distribution of the weights of a Neural Network! This could be incredibly promising, since we can combine the powers from statistical modeling techniques with the of universal function approximation from Neural Networks. To this end, there are recent [voices](https://raw.githubusercontent.com/mlresearch/v235/main/assets/papamarkou24b/papamarkou24b.pdf) arguing why [Bayesian Deep Learning is a promising avenue]{.mark}.
 
-Bayesian Modeling is the primary choice if you want to obtain the uncertainty associated with the predictions of a model. Of course, there are also [voices](https://raw.githubusercontent.com/mlresearch/v235/main/assets/papamarkou24b/papamarkou24b.pdf) arguing why Bayesian Deep Learning is [a promising avenue]{.mark}.
+In Bayesian Modeling, *Hierarchical Bayesian Modeling* is a special kind of model specification, helping the sampler to expore the distribution of interest. It is in fact so powerful that once you know about it, you can't unsee applications of it (primarily in the Sciences). Hierarchical Modeling can be used if you have some **grouped** structure in your dataset, e.g. if products can be assigned to clusters that share some properties. More on this technique in @sec-hbnns.
 
-There are some very useful blog entries and notebooks out there (e.g. [by Thomas Wiecki](https://twiecki.io/blog/2018/08/13/hierarchical_bayesian_neural_network/) using Theano PyMC3 and [this repo](https://github.com/homerjed/hbnn) using a more recent version of JAX).
-
-However, those examples only work with the critical assumption that the group sizes are all **of the same size**. In reality, this is rarely the case, of course.
+There are some very useful blog entries and notebooks out there (e.g. [by Thomas Wiecki](https://twiecki.io/blog/2018/08/13/hierarchical_bayesian_neural_network/) using Theano and PyMC3 and [this repo](https://github.com/homerjed/hbnn) using a more recent version of JAX). However, those examples only work with the critical assumption that the group sizes are all **of the same size**. In reality, this is rarely the case, of course.
 
 Here, I will show you how you can implement a `Hierarchical Bayesian Neural Network` irrespective of the group sizes you observe in your dataset.
 
+The notebook is structured as follows:
 
+1.  ✍️ Create a dataset: Binary classification with unequal observations per group
+2.  🧠 What's the modelling approach and why does it work?
+3.  👾 Code the model
+4.  🚀 Run the model and evaluate
+
+# Setup and dummy data generation
+
+Let's first import the libraries we'll need:
 
 ```{python}
+#| label: load-libraries
+
 from typing import Tuple
 from datetime import date
 from functools import partial
@@ -46,45 +60,19 @@ import blackjax
 import tensorflow_probability.substrates.jax.distributions as tfd
 from sklearn.model_selection import train_test_split
 
-
 filterwarnings("ignore")
-```
-
-
-
-```{python}
-
 key = jr.key(int(date.today().strftime("%Y%m%d")))
-cmap = mpl.colormaps["PiYG"]
-
+cmap = mpl.colormaps["RdYlGn"]
 ```
 
+Thoughout the notebook, we'll use the standard `two-moons` dataset, being a binary classification problem. @fig-two-moons shows how the dataset looks with some training examples.
 
 ```{python}
-
-# Data
-n_groups = 18
-n_grps_sq = int(np.sqrt(n_groups))
-n_samples = np.random.randint(10, 200, size=n_groups)
-noise = 0.3
-
-# MLP params
-data_dim = 2
-hidden_layer_width = 8
-n_hidden_layers = 3
-
-# Sampling
-num_warmup = 200
-num_samples = 400
-```
-
-
-
-```{python}
+#| label: fig-two-moons
 #| fig-cap: "The standard two-moons dataset plot"
 
-
-X, Y = make_moons(noise=noise, n_samples=1000)
+noise = 0.3
+X, Y = make_moons(noise=noise, n_samples=2000)
 
 for i in range(2):
     plt.scatter(X[Y == i, 0], X[Y == i, 1], color=cmap(float(i)), label=f"Class {i}", alpha=0.8)
@@ -92,9 +80,30 @@ plt.legend()
 plt.show()
 ```
 
-
+Next, let's choose some values for the data generation of our grouped dataset. We'll create several groups with a random number of samples, choose some settings for our Neural Network implementation and set two parameters for the MCMC-Algorithm: the number of 'warmup' samples (which will be discarded after the model fitting finished) and the number of sampling steps.
 
 ```{python}
+#| label: data-and-model-settings
+
+# Data
+n_groups = 16
+n_grps_sq = int(np.sqrt(n_groups))
+n_samples = np.random.randint(10, 200, size=n_groups)
+
+# MLP params
+data_dim = 2
+hidden_layer_width = 8
+n_hidden_layers = 3
+
+# Sampling
+num_warmup = 1000
+num_samples = 2000
+```
+
+We then write a function which rotates the dataset in the 2-D space a bit and generate the datasets, store them in lists:
+
+```{python}
+#| label: generate-groups
 
 def rotate(X, deg):
     theta = np.radians(deg)
@@ -102,7 +111,6 @@ def rotate(X, deg):
     R = np.matrix([[c, -s], [s, c]])
     X = X.dot(R)
     return np.asarray(X)
-
 
 np.random.seed(31)
 
@@ -129,9 +137,11 @@ for i in range(n_groups):
     gs_test.append(X_test.shape[0])
 ```
 
-
+Next, we pad the entries in our list of datasets such that all the entries have the same shape: the shape of the largest dataset. We also create a mask, marking the elements of the entries which were padded. Padding works here, because we can disregard the masked positions in our datasets in the `loglikelihood function`.
 
 ```{python}
+#| label: apply-padding
+
 def pad_arrays(arrays, fill_value):
     max_size = max(array.shape[0] for array in arrays)
     padded_arrays = []
@@ -146,10 +156,6 @@ def pad_arrays(arrays, fill_value):
             padded_arrays.append(padded_array)
     return padded_arrays
 
-```
-
-
-```{python}
 # Stack group arrays and create a mask
 fill_value = 1e5
 Xs_train = jnp.stack(pad_arrays(Xs_train, fill_value))
@@ -161,17 +167,25 @@ mask_train = jnp.where(Xs_train == fill_value, fill_value, 1)
 mask_test = jnp.where(Xs_test == fill_value, fill_value, 1)
 ```
 
+In @fig-show-datasets you can see how the datasets look and how many entries the individual groups got:
 
 ```{python}
-#| fig-cap: "18 groups with varying numbers of training examples"
+#| label: fig-show-datasets
+#| fig-cap: "Groups with varying numbers of training examples"
 
+# utility function for plotting
+def closest_factors(n):
+    a, b = 1, n
+    for i in range(1, int(n**0.5) + 1):
+        if n % i == 0:
+            a, b = i, n // i 
+    return a, b
 
 
 # Number of rows and columns for subplots
-n_rows = int(np.ceil(n_groups / n_grps_sq))
-n_cols = n_grps_sq
+n_cols, n_rows = closest_factors(n_groups)
 
-fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 10), sharex=True, sharey=True)
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols*3, n_rows*2), sharex=True, sharey=True)
 
 # Flatten axes array for easy iteration
 axes = axes.flatten()
@@ -192,87 +206,327 @@ plt.tight_layout()
 plt.show()
 ```
 
+# A Bayesian Hierarchical Neural Network {#sec-hbnns}
+
+Now, let's dig into why modeling this dataset with a `hierarchical` Neural Network might make sense. Beware: we'll use some vocabulary from statistical modeling.
+
+The prominent probabilistic modeler [Michael Betancourt](https://betanalpha.github.io) provides an [in depth introduction to the foundations of hierarchical modeling](https://betanalpha.github.io/assets/case_studies/hierarchical_modeling.html). Conceptually, hierarchical modeling is an approach if there is a latent population that we can couple context-dependent parameters to. In our dataset, we assume there is some homogeneous structure *withtin* the groups, whereas the groups may be different *between* them. This means that we can actually share the weights of the group's individual Neural Networks **across** all networks, because the task (binary classification with some Z-shape) is similar; even though the individual groups are all oriented differently in the 2-D space (difference between the groups).
+
+::: callout-tip
+## When does a Hierarchical Bayesian Neural Network make the most sense?
+
+Summarizing, a HBNN requires that:
+
+-   you can make use of a grouping structure in your dataset
+-   the data generating process of the individual groups is similar
+
+It is the strongest, if you have a small-ish number of observations (probably in relation to the difficulty of the learning task?), since in this case 'traditional' approaches will fail (see @tip-book-example).
+:::
+
+::: {#tip-book-example .callout-tip collapse="true"}
+## Recap: Running a separate model per group (example from the Blackjax Sampling book)
+
+Since it's covered in the [HBNN-tutorial from the BlackJax Sampling Book](https://blackjax-devs.github.io/sampling-book/models/hierarchical_bnn.html), I will just copy-paste the code here for reference and the curious (and because I don't want to loose this example if the Sampling Book disappears at some point).
+
+**The key takeaway is this**: If you fit the models separately, there will be not enough training examples for the Neural Network to capture the nonlinear relationship separating the two classes.
 
 ```{python}
+#| label: recap-sampling-book-example
+
+import matplotlib.pyplot as plt
+import jax
+from datetime import date
+
+from functools import partial
+from warnings import filterwarnings
+
+from flax import linen as nn
+from flax.linen.initializers import ones
+import jax.numpy as jnp
+import numpy as np
+import tensorflow_probability.substrates.jax.distributions as tfd
+
+from sklearn.datasets import make_moons
+from sklearn.preprocessing import scale
+
+import blackjax
+
+filterwarnings("ignore")
+
+import matplotlib as mpl
+
+plt.rcParams["axes.spines.right"] = False
+plt.rcParams["axes.spines.top"] = False
+
+rng_key = jax.random.key(int(date.today().strftime("%Y%m%d")))
+
+n_groups_tut = 18
+
+n_grps_sq_tut = int(np.sqrt(n_groups_tut))
+n_samples_tut = 100
+
+
+def rotate_tut(X, deg):
+    theta = np.radians(deg)
+    c, s = np.cos(theta), np.sin(theta)
+    R = np.matrix([[c, -s], [s, c]])
+
+    X = X.dot(R)
+
+    return np.asarray(X)
+
+np.random.seed(31)
+
+Xs_tut, Ys_tut = [], []
+for i in range(n_groups_tut):
+    # Generate data with 2 classes that are not linearly separable
+    X, Y = make_moons(noise=0.3, n_samples=n_samples_tut)
+    X = scale(X)
+
+    # Rotate the points randomly for each category
+    rotate_by = np.random.randn() * 90.0
+    X = rotate_tut(X, rotate_by)
+    Xs_tut.append(X)
+    Ys_tut.append(Y)
+
+Xs_tut = jnp.stack(Xs_tut)
+Ys_tut = jnp.stack(Ys_tut)
+
+Xs_tut_train = Xs_tut[:, : n_samples_tut // 2, :]
+Xs_tut_test = Xs_tut[:, n_samples_tut // 2 :, :]
+Ys_tut_train = Ys_tut[:, : n_samples_tut // 2]
+Ys_tut_test = Ys_tut[:, n_samples_tut // 2 :]
+
 grid = jnp.mgrid[-3:3:100j, -3:3:100j].reshape((2, -1)).T
-grid_3d = jnp.repeat(grid[None, ...], n_groups, axis=0)
-mask_grid = jnp.ones(grid_3d.shape)
+grid_3d = jnp.repeat(grid[None, ...], n_groups_tut, axis=0)
+
+def inference_loop_tut(rng_key, step_fn, initial_state, num_samples):
+    def one_step(state, rng_key):
+        state, _ = step_fn(rng_key, state)
+        return state, state
+
+    keys = jax.random.split(rng_key, num_samples)
+    _, states = jax.lax.scan(one_step, initial_state, keys)
+
+    return states
+
+def get_predictions_tut(model, samples, X, rng_key):
+    vectorized_apply = jax.vmap(model.apply, in_axes=(0, None), out_axes=0)
+    z = vectorized_apply(samples, X)
+    predictions = tfd.Bernoulli(logits=z).sample(seed=rng_key)
+
+    return predictions.squeeze(-1)
+
+def get_mean_predictions_tut(predictions, threshold=0.5):
+    # compute mean prediction and confidence interval around median
+    mean_prediction = jnp.mean(predictions, axis=0)
+    return mean_prediction > threshold
+
+def fit_and_eval_tut(
+    rng_key,
+    model,
+    logdensity_fn,
+    X_train,
+    Y_train,
+    X_test,
+    grid,
+    n_groups=None,
+    num_warmup=1000,
+    num_samples=500,
+):
+    (
+        init_key,
+        warmup_key,
+        inference_key,
+        train_key,
+        test_key,
+        grid_key,
+    ) = jax.random.split(rng_key, 6)
+
+    if n_groups is None:
+        initial_position = model.init(init_key, jnp.ones(X_train.shape[-1]))
+    else:
+        initial_position = model.init(init_key, jnp.ones(X_train.shape))
+
+    # initialization
+    logprob = partial(logdensity_fn, X=X_train, Y=Y_train, model=model)
+
+    # warm up
+    adapt = blackjax.window_adaptation(blackjax.nuts, logprob)
+    (final_state, params), _ = adapt.run(warmup_key, initial_position, num_warmup)
+    step_fn = blackjax.nuts(logprob, **params).step
+
+    # inference
+    states = inference_loop_tut(inference_key, step_fn, final_state, num_samples)
+    samples = states.position
+
+    # evaluation
+    predictions = get_predictions_tut(model, samples, X_train, train_key)
+    Y_pred_train = get_mean_predictions_tut(predictions)
+
+    predictions = get_predictions_tut(model, samples, X_test, test_key)
+    Y_pred_test = get_mean_predictions_tut(predictions)
+
+    pred_grid = get_predictions_tut(model, samples, grid, grid_key)
+
+    return Y_pred_train, Y_pred_test, pred_grid
+
+# MLP params
+hidden_layer_width_tut = 5
+n_hidden_layers_tut = 2
+
+class NN(nn.Module):
+    n_hidden_layers: int
+    layer_width: int
+
+    @nn.compact
+    def __call__(self, x):
+        for i in range(self.n_hidden_layers):
+            x = nn.Dense(features=self.layer_width)(x)
+            x = nn.tanh(x)
+        return nn.Dense(features=1)(x)
+
+
+bnn = NN(n_hidden_layers_tut, hidden_layer_width_tut)
+
+def logprior_fn_tut(params):
+    leaves, _ = jax.tree_util.tree_flatten(params)
+    flat_params = jnp.concatenate([jnp.ravel(a) for a in leaves])
+    return jnp.sum(tfd.Normal(0, 1).log_prob(flat_params))
+
+
+def loglikelihood_fn_tut(params, X, Y, model):
+    logits = jnp.ravel(model.apply(params, X))
+    return jnp.sum(tfd.Bernoulli(logits).log_prob(Y))
+
+
+def logdensity_fn_of_bnn_tut(params, X, Y, model):
+    return logprior_fn_tut(params) + loglikelihood_fn_tut(params, X, Y, model)
+
+rng_key, eval_key = jax.random.split(rng_key)
+keys = jax.random.split(eval_key, n_groups_tut)
+
+
+def fit_and_eval_single_mlp_tut(key, X_train, Y_train, X_test):
+    return fit_and_eval_tut(
+        key, bnn, logdensity_fn_of_bnn_tut, X_train, Y_train, X_test, grid, n_groups=None
+    )
+
+
+Ys_pred_train, Ys_pred_test, ppc_grid_single = jax.vmap(fit_and_eval_single_mlp_tut)(
+    keys, Xs_tut_train, Ys_tut_train, Xs_tut_test
+)
+
+def plot_decision_surfaces_non_hierarchical_tut(nrows=2, ncols=2):
+    fig, axes = plt.subplots(
+        figsize=(15, 12), nrows=nrows, ncols=ncols, sharex=True, sharey=True
+    )
+    axes = axes.flatten()
+    for i, (X, Y_pred, Y_true, ax) in enumerate(
+        zip(Xs_tut_train, Ys_pred_train, Ys_tut_train, axes)
+    ):
+        ax.contourf(
+            grid[:, 0].reshape(100, 100),
+            grid[:, 1].reshape(100, 100),
+            ppc_grid_single[i, ...].mean(axis=0).reshape(100, 100),
+            cmap=cmap,
+        )
+        for i in range(2):
+            ax.scatter(
+                X[Y_true == i, 0], X[Y_true == i, 1], 
+                color=cmap(float(i)), label=f"Class {i}", alpha=.8)
+        ax.legend()
+
+plot_decision_surfaces_non_hierarchical_tut(nrows=n_grps_sq_tut, ncols=n_grps_sq_tut)
 ```
+:::
 
+# Coding the model
 
+Now we're ready for the modeling code. To get an overview of the model we we're about to create, have a look at @fig-model-depict. There, we have **groups** $g=1:G$ with the respective weight matrices $w^g_{l}$ for the input, hidden and output layers $l$.
+
+The group weights are drawn from a Normal distribution, which, in a *non-centered* form means
+
+$$
+w^g_l = \mu_{l} + \epsilon^g_{l} \sigma_l
+$$
+
+with
+
+$$
+\begin{align}\mu_l &\sim \mathcal{N}(0,1) \\\epsilon^g_l &\sim \mathcal{N}(0,1) \\\sigma_l &= 1\end{align}
+$$
+
+This non-centered formulation simplifies the space to be explored by our sampler.
+
+::: callout-note
+## Centered Formulation
+
+We don't model the individual weights directly. This 'Centered Formulation' would mean $w^g_l \sim \mathcal{N}(\mu_l, \sigma_l)$ with usually a $\mathcal{N}$ prior for $\mu$; and a $\mathcal{N}^+$ prior for $\sigma$.
+:::
+
+![Graphical Depiction of the model we want to train (slightly adapted from [the HBNN sampling book reference](https://blackjax-devs.github.io/sampling-book/models/hierarchical_bnn.html))](figures/model_composition.svg){#fig-model-depict width="70%"}
+
+In the following code block, we write the model using [Equinox](https://docs.kidger.site/equinox/all-of-equinox/), which in turn uses [JAX](https://github.com/jax-ml/jax) for all the numerical routines (e.g. autodiff).
 
 ```{python}
-@eqx.filter_vmap
-def make_ensemble(key):
-    # Create an ensemble of models
-    net = eqx.nn.MLP(in_size=data_dim, out_size=1, width_size=hidden_layer_width, depth=n_hidden_layers, key=key)
-    return net
+#| label: code-HNN
+#| code-fold: false
 
-
-@eqx.filter_vmap(in_axes=(eqx.if_array(0), None))
-def evaluate_ensemble(ensemble, x):
-    # Evaluate each member of the ensemble on the same data
-    o = ensemble(x)
-    return o.mean()
-
-
-def evaluate_per_ensemble(model, x):
-    return jax.vmap(model)(x)
-
-
-def apply_ensemble(ensemble, D):
-    # ensemble_fn = partial(evaluate_ensemble, ensemble)
-    preds = eqx.filter_vmap(evaluate_per_ensemble)(ensemble, D)
-    return preds
-
-
-key = jr.PRNGKey(0)
-hnn = make_ensemble(jr.split(key, n_groups))
-```
-
-
-```{python}
-class NonCentredLinear(eqx.Module):
-    # mu is the global network
+class NonCentredLinear(eqx.Module):                                 # <1>
     mu: jax.Array
-    # eps are the n_group local networks
     eps: jax.Array
     std: jax.Array
 
     def __init__(self, in_size, out_size, n_groups, *, key):
-        self.mu = jr.normal(key, (in_size, out_size))
-        self.eps = jr.normal(key, (n_groups, in_size, out_size))
-        self.std = jnp.ones((1,))
+        self.mu = jr.normal(key, (in_size, out_size))               # <2>
+        self.eps = jr.normal(key, (n_groups, in_size, out_size))    # <3>
+        self.std = jnp.ones((1,))                                   # <4>
 
-    def __call__(self, x):
-        w = self.mu + self.std * self.eps
-        return x @ w
+    def __call__(self, x):                                          # <5>
+        w = self.mu + self.eps * self.std                           # <5>
+        return x @ w                                                # <5>
 
 
-class HNN(eqx.Module):
+class HNN(eqx.Module):                                              # <6>
     layers: Tuple[NonCentredLinear]
     out: eqx.nn.Linear
 
-    def __init__(self, layer_width, n_layers, n_groups, *, key):
+    def __init__(self, data_dim, layer_width, n_layers, n_groups, *, key): # <7>
         dims = [data_dim] + [layer_width] * n_layers
         layers = []
         for n, (_in, _out) in enumerate(zip(dims[:-1], dims[1:])):
-            layer = NonCentredLinear(_in, _out, n_groups, key=jr.fold_in(key, n))
+            layer = NonCentredLinear(_in, _out, n_groups, key=jr.fold_in(key, n)) # <8>
             layers += [layer]
         self.layers = tuple(layers)
-        self.out = eqx.nn.Linear(layer_width, 1, key=key)
+        self.out = eqx.nn.Linear(layer_width, 1, key=key)  # <9>
 
     def __call__(self, x):
         for layer in self.layers:
             x = layer(x)
-            x = jax.nn.tanh(x)
+            x = jax.nn.tanh(x)  # <10>
         # Vmap over groups and samples
         o = jax.vmap(jax.vmap(self.out))(x)
         return o
 ```
 
+1.  Write the Non-centered layers as Equinox module
+2.  Initialize the weights in $\mu$ as standard Normal, one for each layer
+3.  Initialize the weights in $\epsilon$ as standard Normal, one for each layer **and** group
+4.  Initialize $\sigma$ as 1.
+5.  Non-centered combination of the matrices and the dot-product of $x$ and $w$.
+6.  Write the Hierarchical Neural Network as Equinox module
+7.  In this implementation, all layers have the same width
+8.  Create all hidden layers
+9.  Final linear layer
+10. Choose $\tanh$ as activation function
+
+Next, we instantiate the HNN model and write some code that Equinox needs.
 
 ```{python}
+#| label: instantiate-model
+
+
 def get_init_apply_fns(model):
     params, static = eqx.partition(model, eqx.is_inexact_array)
 
@@ -285,27 +539,66 @@ def get_init_apply_fns(model):
 
     return init_fn, apply_fn
 
-hnn = HNN(hidden_layer_width, n_hidden_layers, n_groups, key=key)
+hnn = HNN(data_dim, hidden_layer_width, n_hidden_layers, n_groups, key=key) # <1>
 init_fn, apply_fn = get_init_apply_fns(hnn)
 params = init_fn()
 
-```
-
-
-
-```{python}
 def inference_loop(key, step_fn, initial_state, num_samples):
     def one_step(state, key):
         state, _ = step_fn(key, state)
         return state, state
 
     keys = jr.split(key, num_samples)
-    _, states = jax.lax.scan(one_step, initial_state, keys)
+    _, states = jax.lax.scan(one_step, initial_state, keys) # <2>
     return states
+
+
 ```
+1. Instantiate the HNN model
+2. In Jax, we can use the `scan` method to iterate over a function
 
-
+Next, we write the (log)-prior function for the parameters of the model, as well as the log-likelihood.
 ```{python}
+#| label: prior-likelihood
+
+
+def logprior_fn(params):
+    normal = tfd.Normal(0.0, 1.0)
+    leaves, _ = jax.tree_util.tree_flatten(params)
+    flat_params = jnp.concatenate([jnp.ravel(a) for a in leaves])
+    return jnp.sum(normal.log_prob(flat_params))
+
+def logprior_fn_of_hnn(params, model):
+    """p(w) where w is NN(X; w)"""
+    lp = 0.0
+    half_normal = tfd.HalfNormal(1.0)
+    normal = tfd.Normal(0.0, 1.0)
+    for layer in params.layers:
+        lp += normal.log_prob(layer.mu).sum()
+        lp += normal.log_prob(layer.eps).sum()
+        lp += half_normal.log_prob(layer.std).sum()
+    lp += logprior_fn(params.out)
+    return lp
+
+
+def loglikelihood_fn(params, X, Y, mask, fill_value, model):
+    """p(Y|Y_=NN(X; w))"""
+    logits = jnp.ravel(apply_fn(params, X))
+    logits = jnp.where(jnp.ravel(mask[:, :, 0]) == fill_value, 0, logits) # <1>
+    return jnp.sum(tfd.Bernoulli(logits).log_prob(jnp.ravel(Y)))
+
+
+def logdensity_fn_of_hnn(params, X, Y, mask, fill_value, model):
+    return logprior_fn_of_hnn(params, model) + loglikelihood_fn(params, X, Y, mask, fill_value, model)
+```
+1. apply the mask: where the mask has the fill value, the logits should also be zero
+
+
+And some utility functions for extracting the model predictions
+```{python}
+#| label: utils
+
+
 def get_predictions(model, samples, X, mask, fill_value, key):
     vectorized_apply = jax.vmap(apply_fn, in_axes=(0, None), out_axes=0)
     z = vectorized_apply(samples, X)
@@ -315,20 +608,13 @@ def get_predictions(model, samples, X, mask, fill_value, key):
     )
     predictions = jnp.where(mask_reshaped == fill_value, jnp.nan, predictions)
     return predictions.squeeze(-1)
-```
 
-
-
-```{python}
 def get_mean_predictions(predictions, threshold=0.5):
     # Compute mean prediction and confidence interval around median
     mean_prediction = jnp.nanmean(predictions, axis=0)
     return mean_prediction > threshold
-```
 
 
-
-```{python}
 
 def fit_and_eval(
     key,
@@ -341,8 +627,8 @@ def fit_and_eval(
     fill_value,
     X_test,
     grid,
-    num_warmup=200,
-    num_samples=100,
+    num_warmup=20,
+    num_samples=10,
 ):
     (
         warmup_key,
@@ -374,43 +660,24 @@ def fit_and_eval(
     pred_grid = get_predictions(model, samples, grid, mask_grid, fill_value, grid_key)
 
     return Y_pred_train, Y_pred_test, pred_grid
+
+def reverse_mask(targets, predictions, mask, fill_value):
+    targets, predictions, mask = jnp.ravel(targets), jnp.ravel(predictions), jnp.ravel(mask[:,:,0])
+    positions_to_omit = jnp.where(mask == fill_value)[0]
+    filtered_targets, filtered_predictions = jnp.delete(targets, positions_to_omit), jnp.delete(predictions, positions_to_omit)
+    return filtered_targets,filtered_predictions
 ```
 
+We create a 3D-grid (n_groups, 100*100, 2) to get the model's predictions (with the respective probability) and run the model:
 
 ```{python}
-def logprior_fn(params):
-    normal = tfd.Normal(0.0, 1.0)
-    leaves, _ = jax.tree_util.tree_flatten(params)
-    flat_params = jnp.concatenate([jnp.ravel(a) for a in leaves])
-    return jnp.sum(normal.log_prob(flat_params))
-
-def logprior_fn_of_hnn(params, model):
-    """p(w) where w is NN(X; w)"""
-    lp = 0.0
-    half_normal = tfd.HalfNormal(1.0)
-    normal = tfd.Normal(0.0, 1.0)
-    for layer in params.layers:
-        lp += normal.log_prob(layer.mu).sum()
-        lp += normal.log_prob(layer.eps).sum()
-        lp += half_normal.log_prob(layer.std).sum()
-    lp += logprior_fn(params.out)
-    return lp
+#| label: model-training
 
 
-def loglikelihood_fn(params, X, Y, mask, fill_value, model):
-    """p(Y|Y_=NN(X; w))"""
-    logits = jnp.ravel(apply_fn(params, X))
-    # apply the mask: where the mask has the fill value, the logits should also be zero
-    logits = jnp.where(jnp.ravel(mask[:, :, 0]) == fill_value, 0, logits)
-    return jnp.sum(tfd.Bernoulli(logits).log_prob(jnp.ravel(Y)))
+grid = jnp.mgrid[-3:3:100j, -3:3:100j].reshape((2, -1)).T 
+grid_3d = jnp.repeat(grid[None, ...], n_groups, axis=0)
+mask_grid = jnp.ones(grid_3d.shape)
 
-
-def logdensity_fn_of_hnn(params, X, Y, mask, fill_value, model):
-    return logprior_fn_of_hnn(params, model) + loglikelihood_fn(params, X, Y, mask, fill_value, model)
-```
-
-
-```{python}
 key, inference_key = jr.split(key)
 
 (Ys_hierarchical_pred_train, Ys_hierarchical_pred_test, ppc_grid) = fit_and_eval(
@@ -431,16 +698,8 @@ key, inference_key = jr.split(key)
 
 
 ```{python}
-def reverse_mask(targets, predictions, mask, fill_value):
-    targets, predictions, mask = jnp.ravel(targets), jnp.ravel(predictions), jnp.ravel(mask[:,:,0])
-    positions_to_omit = jnp.where(mask == fill_value)[0]
-    filtered_targets, filtered_predictions = jnp.delete(targets, positions_to_omit), jnp.delete(predictions, positions_to_omit)
-    return filtered_targets,filtered_predictions    
-```
+#| label: reverse-the-mask
 
-
-
-```{python}
 filtered_Ys_train, filtered_Ys_hierarchical_pred_train = reverse_mask(
     Ys_train, Ys_hierarchical_pred_train, mask_train, fill_value
 )
@@ -449,20 +708,24 @@ filtered_Ys_test, filtered_Ys_hierarchical_pred_test = reverse_mask(
 )
 ```
 
-
 ```{python}
+#| label: calculate-train-accuracy
+
+
 print("Train accuracy = {:.2f}%".format(100 * jnp.mean(filtered_Ys_hierarchical_pred_train == filtered_Ys_train)))
 
 ```
 
-
 ```{python}
+#| label: calculate-test-accuracy
+
 print("Test accuracy = {:.2f}%".format(100 * jnp.mean(filtered_Ys_hierarchical_pred_test == filtered_Ys_test)))
 
 ```
 
-
 ```{python}
+#| label: plotting-function
+
 def plot_decision_surfaces_hierarchical(nrows=2, ncols=2):
     fig, axes = plt.subplots(figsize=(15, 12), nrows=nrows, ncols=ncols, sharex=True, sharey=True)
 
@@ -494,4 +757,17 @@ def plot_decision_surfaces_hierarchical(nrows=2, ncols=2):
 plot_decision_surfaces_hierarchical(nrows=n_grps_sq, ncols=n_grps_sq)
 plt.savefig("figures/hbnn_decision_boundaries.png", bbox_inches="tight")
 plt.show()
+```
+
+
+# Summary
+
+Great! We successfully wrote a model that can work with varying inpout shapes, by using padding and masking. Written in this way, the Bayesian Hierarchical Neural Network is much more generally applicable compared to an implementation assuming groups of equal sizes.
+
+
+
+```{python}
+#| label: show-package-versions
+from print_versions import print_versions
+print_versions(globals())
 ```

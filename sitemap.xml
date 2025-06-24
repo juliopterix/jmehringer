@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://juliopterix.github.io/jmehringer/posts/2025-06-11-welcome/index.html</loc>
-    <lastmod>2025-06-11T20:19:13.079Z</lastmod>
-  </url>
-  <url>
-    <loc>https://juliopterix.github.io/jmehringer/index.html</loc>
-    <lastmod>2025-06-11T20:15:08.179Z</lastmod>
+    <loc>https://juliopterix.github.io/jmehringer/posts/2025-06-11-hierarchical-NN/index.html</loc>
+    <lastmod>2025-06-24T20:05:53.952Z</lastmod>
   </url>
   <url>
     <loc>https://juliopterix.github.io/jmehringer/about.html</loc>
-    <lastmod>2025-06-11T18:06:56.519Z</lastmod>
+    <lastmod>2025-06-24T20:00:43.706Z</lastmod>
   </url>
   <url>
-    <loc>https://juliopterix.github.io/jmehringer/posts/2025-06-11-hierarchical-NN/index.html</loc>
-    <lastmod>2025-06-12T21:47:35.916Z</lastmod>
+    <loc>https://juliopterix.github.io/jmehringer/index.html</loc>
+    <lastmod>2025-06-24T20:00:43.706Z</lastmod>
+  </url>
+  <url>
+    <loc>https://juliopterix.github.io/jmehringer/posts/2025-06-11-welcome/index.html</loc>
+    <lastmod>2025-06-24T20:00:43.706Z</lastmod>
   </url>
 </urlset>
